@@ -1,27 +1,19 @@
-import { createStore } from 'libs/server/store'
-import { ApiRequest, ApiResponse, ApiNext } from '../api'
-import { GetServerSidePropsContext } from 'next'
-import TreeStore from 'libs/server/tree'
+import { createStore } from 'libs/server/store';
+import { ApiRequest, SSRMiddleware } from '../connect';
+import TreeStore from 'libs/server/tree';
 
-export function useStore(req: ApiRequest, _res: ApiResponse, next: ApiNext) {
-  applyStore(req)
+export const useStore: SSRMiddleware = async (req, _res, next) => {
+    applyStore(req);
 
-  return next()
-}
+    return next();
+};
 
-function applyStore(req: ApiRequest) {
-  req.store = createStore()
-  req.treeStore = new TreeStore(req.store)
-}
+export function applyStore(req: ApiRequest) {
+    const store = createStore();
 
-export function withStore(wrapperHandler: any) {
-  return async function handler(
-    ctx: GetServerSidePropsContext & {
-      req: ApiRequest
-    }
-  ) {
-    applyStore(ctx.req)
-
-    return wrapperHandler(ctx)
-  }
+    req.state = {
+        ...req.state,
+        store,
+        treeStore: new TreeStore(store),
+    };
 }

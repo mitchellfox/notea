@@ -1,51 +1,64 @@
-import { getEnv } from 'libs/shared/env'
-import { PageMode } from 'libs/shared/page'
-import { GetServerSidePropsContext } from 'next'
-import { ApiRequest, ApiResponse, ApiNext } from '../api'
+import { PageMode } from 'libs/shared/page';
+import { ApiRequest, ApiResponse, ApiNext, SSRMiddleware } from '../connect';
+import { config } from 'libs/server/config';
 
 export async function useAuth(
-  req: ApiRequest,
-  res: ApiResponse,
-  next: ApiNext
+    req: ApiRequest,
+    res: ApiResponse,
+    next: ApiNext
 ) {
-  if (!isLoggedIn(req)) {
-    return res.APIError.NEED_LOGIN.throw()
-  }
-
-  return next()
-}
-
-export function withAuth(wrapperHandler: any) {
-  return async function handler(
-    ctx: GetServerSidePropsContext & {
-      req: ApiRequest
-    }
-  ) {
-    const redirectLogin = {
-      redirect: {
-        destination: `/login?redirect=${ctx.resolvedUrl}`,
-        permanent: false,
-      },
+    if (process.env.NODE_ENV === 'test') {
+        return next();
     }
 
-    const res = await wrapperHandler(ctx)
-
-    if (res.props?.pageMode !== PageMode.PUBLIC && !isLoggedIn(ctx.req)) {
-      return redirectLogin
+    if (!isLoggedIn(req)) {
+        return res.APIError.NEED_LOGIN.throw();
     }
 
-    res.props = {
-      ...res.props,
-    }
-
-    return res
-  }
+    return next();
 }
 
 export function isLoggedIn(req: ApiRequest) {
-  if (getEnv('IS_DEMO')) {
-    return true
-  }
+    const cfg = config();
+    if (cfg.auth.type === 'none') {
+        return true;
+    }
 
-  return req.session.get('user')?.isLoggedIn
+    return !!req.session.get('user')?.isLoggedIn;
 }
+
+export const applyAuth: SSRMiddleware = async (req, _res, next) => {
+    // const IS_DEMO = getEnv<boolean>('IS_DEMO', false);
+
+    req.props = {
+        ...req.props,
+        isLoggedIn: isLoggedIn(req),
+        disablePassword: config().auth.type === 'none',
+        IS_DEMO: false,
+    };
+
+    next();
+};
+
+export const applyRedirectLogin: (resolvedUrl: string) => SSRMiddleware =
+    (resolvedUrl: string) => async (req, _res, next) => {
+        const redirect = {
+            destination: `/login?redirect=${resolvedUrl}`,
+            permanent: false,
+        };
+
+        // note 存在的情况
+        if (req.props.pageMode) {
+            if (
+                req.props.pageMode !== PageMode.PUBLIC &&
+                !req.props.isLoggedIn
+            ) {
+                req.redirect = redirect;
+            }
+            // 访问首页没有 note，则判断是否登录
+        } else if (!req.props.isLoggedIn) {
+            req.redirect = redirect;
+        }
+
+        next();
+    };

@@ -1,59 +1,60 @@
-import Tokens from 'csrf'
-import { CRSF_HEADER_KEY } from 'libs/shared/crsf'
-import { getEnv } from 'libs/shared/env'
-import { PageMode } from 'libs/shared/page'
-import md5 from 'md5'
-import { GetServerSidePropsContext } from 'next'
-import { ApiNext, ApiRequest, ApiResponse } from '../api'
+import Tokens from 'csrf';
+import { CSRF_HEADER_KEY } from 'libs/shared/const';
+import md5 from 'md5';
+import { ApiNext, ApiRequest, ApiResponse, SSRMiddleware } from '../connect';
+import { BasicAuthConfiguration, config } from 'libs/server/config';
 
-const tokens = new Tokens()
+const tokens = new Tokens();
 
 // generate CSRF secret
-const csrfSecret = md5('CSRF' + getEnv('PASSWORD'))
+let _csrfSecret: string;
+const csrfSecret = () => _csrfSecret ?? (_csrfSecret = md5('CSRF' + (config().auth as BasicAuthConfiguration).password));
 
-export const getCsrfToken = () => tokens.create(csrfSecret)
+export const getCsrfToken = () => tokens.create(csrfSecret());
 
 export const verifyCsrfToken = (token: string) =>
-  tokens.verify(csrfSecret, token)
+    tokens.verify(csrfSecret(), token);
 
-export function withCsrf(wrapperHandler: any) {
-  return async function handler(
-    ctx: GetServerSidePropsContext & {
-      req: ApiRequest
-    }
-  ) {
-    const res = await wrapperHandler(ctx)
-    let csrfToken
+export const applyCsrf: SSRMiddleware = async (req, _res, next) => {
+    req.props = {
+        ...req.props,
+        csrfToken: getCsrfToken(),
+    };
+    req.session.set(CSRF_HEADER_KEY, req.props.csrfToken);
+    await req.session.save();
+    next();
+};
 
-    if (res.redirect) {
-      return res
-    }
-
-    if (res.pageMode !== PageMode.PUBLIC) {
-      csrfToken = getCsrfToken()
-    }
-
-    res.props = {
-      ...res.props,
-      csrfToken,
-    }
-
-    return res
-  }
-}
-
-const ignoredMethods = ['GET', 'HEAD', 'OPTIONS']
+const ignoredMethods = ['GET', 'HEAD', 'OPTIONS'];
 
 export function useCsrf(req: ApiRequest, res: ApiResponse, next: ApiNext) {
-  const token = req.headers[CRSF_HEADER_KEY] as string
+    if (process.env.NODE_ENV === 'test') {
+        return next();
+    }
 
-  if (ignoredMethods.includes(req.method?.toLocaleUpperCase() as string)) {
-    return next()
-  }
+    const token = req.headers[CSRF_HEADER_KEY] as string;
+    const sessionToken = req.session.get(CSRF_HEADER_KEY);
 
-  if (token && verifyCsrfToken(token)) {
-    next()
-  } else {
-    return res.APIError.INVALID_CSRF_TOKEN.throw()
-  }
+    if (ignoredMethods.includes(req.method?.toLocaleUpperCase() as string)) {
+        return next();
+    }
+
+    if (
+        token &&
+        sessionToken &&
+        // TODO: sometimes not equal
+        // token === sessionToken &&
+        verifyCsrfToken(token) &&
+        verifyCsrfToken(sessionToken)
+    ) {
+        next();
+    } else {
+        let message;
+        if (!token) {
+            message = 'Missing CSRF token in headers';
+        } else if (!sessionToken) {
+            message = 'Missing CSRF token in cookies';
+        }
+        return res.APIError.INVALID_CSRF_TOKEN.throw(message);
+    }
 }

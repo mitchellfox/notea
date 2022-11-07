@@ -1,26 +1,15 @@
-const withPWA = require('next-pwa')
-const runtimeCaching = require('next-pwa/cache')
+const nextPWA = require('next-pwa');
+const cache = require('./scripts/cache');
+
+const developmentEnv = process.env.NODE_ENV === 'development';
+const withPWA = nextPWA({
+    // target: process.env.NETLIFY ? 'serverless' : 'server',
+    // mode: process.env.NODE_ENV ?? 'development',
+    disable: developmentEnv,
+    dest: 'public',
+    runtimeCaching: cache,
+});
 
 module.exports = withPWA({
-  future: {
-    webpack5: true,
-  },
-
-  target: process.env.NETLIFY ? 'serverless' : 'server',
-
-  webpack(config, { defaultLoaders }) {
-    config.module.rules.push({
-      test: /\.jsx/,
-      use: [defaultLoaders.babel],
-      include: [/node_modules\/heroicons/],
-    })
-
-    return config
-  },
-
-  pwa: {
-    disable: process.env.NODE_ENV === 'development',
-    dest: 'public',
-    runtimeCaching,
-  },
-})
+    swcMinify: true
+});
